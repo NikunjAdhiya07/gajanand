@@ -1,6 +1,8 @@
 "use client";
 import React, { useState, useEffect, useCallback } from "react";
+import * as XLSX from "xlsx";
 import { formatCurrency } from "@/lib/utils";
+import { computePaymentStatus } from "@/lib/paymentStatus";
 import PaymentStatusDisplay from "./PaymentStatusDisplay";
 import PrintablePaymentTable from "./PrintablePaymentTable";
 import ReconciliationPanel from "./ReconciliationPanel";
@@ -46,6 +48,8 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
   const [loansData, setLoansData] = useState<Loan[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [shareNotice, setShareNotice] = useState<string | null>(null);
+  const [shareLink, setShareLink] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>(
     new Date().toISOString().split("T")[0]
   );
@@ -65,6 +69,7 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
   const [notes, setNotes] = useState<Note[]>([]);
   const [showNotes, setShowNotes] = useState<boolean>(false);
   const [isSavingAll, setIsSavingAll] = useState<boolean>(false);
+  const [isSharingExcel, setIsSharingExcel] = useState<boolean>(false);
   const searchParams = useSearchParams();
   const highlightId = searchParams.get("highlight");
 
@@ -450,6 +455,96 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
     setShowPrintPreview(true);
   };
 
+  const handleShareToWhatsApp = async () => {
+    setIsSharingExcel(true);
+    setError(null);
+    setShareNotice(null);
+    setShareLink(null);
+
+    try {
+      const { leftSide, rightSide } = getTableData();
+      const rows = [...leftSide, ...rightSide]
+        .filter((loan): loan is Loan => loan !== null)
+        .map((loan) => {
+          const { status } = computePaymentStatus(loan, selectedDate, loanType);
+          return {
+            Index: loan.index ?? "",
+            "Inst. Amt": loan.installmentAmount,
+            Name: loan.nameGujarati || loan.nameEnglish,
+            "Payment Status": status,
+            "Payment Today": loan.paymentReceivedToday || 0,
+          };
+        });
+
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      const workbook = XLSX.utils.book_new();
+      const sheetName = `${loanType} ${currentCategory ?? ""}`.trim().slice(0, 31) || "Loans";
+      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+      const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+
+      const categoryPart = currentCategory ? `${currentCategory.replace(/\s+/g, "_")}-` : "";
+      const fileName = `${loanType}-loans-${categoryPart}${selectedDate}.xlsx`;
+      const file = new File([buffer], fileName, {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+
+      // Upload the sheet and share a public download link. WhatsApp can't take a
+      // file from the browser, but anyone can open the link - no login needed.
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("fileName", fileName);
+
+      const response = await fetch("/api/shared-files", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        let message = "Failed to create the download link";
+        try {
+          const errorData = await response.json();
+          message = errorData.error || message;
+        } catch {
+          // Response wasn't JSON; keep the generic message.
+        }
+        throw new Error(message);
+      }
+
+      const { downloadPath } = await response.json();
+      const downloadUrl = new URL(downloadPath, window.location.origin).toString();
+
+      const label = `${loanType.charAt(0).toUpperCase()}${loanType.slice(1)} loans${currentCategory ? ` - ${currentCategory}` : ""
+        }`;
+      const message = `${label} (${selectedDate})\nDownload the Excel file: ${downloadUrl}`;
+
+      setShareLink(downloadUrl);
+      window.open(
+        `https://wa.me/?text=${encodeURIComponent(message)}`,
+        "_blank",
+        "noopener,noreferrer"
+      );
+      setShareNotice("Download link created and WhatsApp opened with the message ready to send.");
+    } catch (err) {
+      console.error("Error sharing Excel file:", err);
+      setError(
+        err instanceof Error ? err.message : "Failed to share Excel file to WhatsApp"
+      );
+    } finally {
+      setIsSharingExcel(false);
+    }
+  };
+
+  const handleCopyShareLink = async () => {
+    if (!shareLink) return;
+    try {
+      await navigator.clipboard.writeText(shareLink);
+      setShareNotice("Download link copied to clipboard.");
+    } catch (err) {
+      console.error("Error copying link:", err);
+      setError("Could not copy the link - select and copy it manually.");
+    }
+  };
+
   const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
     e.target.select();
   };
@@ -568,8 +663,47 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
             >
               Reconciliation
             </button>
+            <button
+              onClick={handleShareToWhatsApp}
+              disabled={isSharingExcel}
+              className={`w-full sm:w-auto px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors duration-300 shadow-md text-base font-bold flex items-center justify-center ${isSharingExcel ? "opacity-50 cursor-not-allowed" : ""
+                }`}
+            >
+              {isSharingExcel ? (
+                <>
+                  <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-solid border-white border-r-transparent"></div>
+                  Preparing...
+                </>
+              ) : (
+                <>Share to WhatsApp</>
+              )}
+            </button>
           </div>
         </div>
+
+        {(shareNotice || shareLink) && (
+          <div className="bg-emerald-100 border border-emerald-400 text-emerald-800 px-4 py-3 rounded-md mb-4 sm:mb-6 shadow-sm text-base font-bold">
+            {shareNotice && <p>{shareNotice}</p>}
+            {shareLink && (
+              <div className="mt-2 flex flex-col sm:flex-row sm:items-center gap-2">
+                <a
+                  href={shareLink}
+                  className="underline break-all font-normal"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {shareLink}
+                </a>
+                <button
+                  onClick={handleCopyShareLink}
+                  className="w-full sm:w-auto px-3 py-1 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors duration-300 text-sm font-bold shrink-0"
+                >
+                  Copy link
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {error && (
           <div className="bg-orange-100 border border-orange-400 text-orange-800 px-4 py-3 rounded-md mb-4 sm:mb-6 shadow-sm text-base font-bold">

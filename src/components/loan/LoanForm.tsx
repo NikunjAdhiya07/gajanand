@@ -11,8 +11,9 @@ import { useRouter } from "next/navigation";
 import TimeDisplay from "@/ui/TimeDisplay";
 import AccountFinder from "../accountFinder/AccountFinder";
 import Image from "next/image";
-import { Loader2, Search } from "lucide-react";
+import { Archive, Loader2, Search } from "lucide-react";
 import CustomAlertDialog from "@/components/customAlertDialog/CustomAlertDialog";
+import ObsoleteLoansModal from "@/components/loan/ObsoleteLoansModal";
 
 const ubuntu = Ubuntu({
   weight: "400",
@@ -20,9 +21,9 @@ const ubuntu = Ubuntu({
 });
 
 export default function LoanForm() {
-  const fetchNextAccountNo = async () => {
+  const fetchNextAccountNo = async (force = false) => {
 
-    if (nextAccountNo) return;
+    if (!force && nextAccountNo) return;
     try {
       const response = await axios({
         method: "get",
@@ -71,6 +72,8 @@ export default function LoanForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [addressEnterCount, setAddressEnterCount] = useState(0);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isObsoleteModalOpen, setIsObsoleteModalOpen] = useState(false);
+  const [isObsoleting, setIsObsoleting] = useState(false);
   const [selectedAccountNo, setSelectedAccountNo] = useState("");
   const addGuarantorButtonRef = useRef<HTMLButtonElement>(null);
   const router = useRouter();
@@ -539,6 +542,46 @@ export default function LoanForm() {
     }
   };
 
+  // Move the loaded account to the obsolete list. Everything about the holder
+  // is kept except the account number, which is freed up for reuse.
+  const handleObsolete = async () => {
+    if (
+      !window.confirm(
+        `Move ${formData.holderName || "this account"} to obsolete? The account number ${formData.accountNo
+        } will be released and can be given to a new account.`
+      )
+    )
+      return;
+
+    setIsObsoleting(true);
+    try {
+      await axios({
+        method: "post",
+        url: "/api/obsoleteLoans",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        data: { accountNo: formData.accountNo },
+      });
+
+      setFormData(initialFormState);
+      setIsExisting(false);
+      await fetchNextAccountNo(true);
+      setAlertMessage("Account moved to obsolete successfully!");
+      setAlertOpen(true);
+    } catch (error) {
+      console.error("Error obsoleting loan:", error);
+      setAlertMessage(
+        (axios.isAxiosError(error) && error.response?.data?.message) ||
+        "Error moving account to obsolete"
+      );
+      setAlertOpen(true);
+    } finally {
+      setIsObsoleting(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!window.confirm("Are you sure you want to delete this loan?")) return;
 
@@ -659,8 +702,8 @@ export default function LoanForm() {
   useEffect(() => {
     const handleKeyDown = (e: WindowEventMap["keydown"]) => {
       if (e.key === "Escape") {
-        if (!isModalOpen) {
-          // Only navigate back if the modal is not open
+        if (!isModalOpen && !isObsoleteModalOpen) {
+          // Only navigate back if no modal is open
           router.push("/");
         }
       }
@@ -668,7 +711,7 @@ export default function LoanForm() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isModalOpen]);
+  }, [isModalOpen, isObsoleteModalOpen]);
 
   const handlePeriodKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "ArrowDown") {
@@ -818,6 +861,14 @@ export default function LoanForm() {
               className="flex items-center gap-2 p-2.5 bg-orange-500 hover:bg-orange-600 lg:hidden text-white rounded-full transition-colors"
             >
               <Search size={20} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsObsoleteModalOpen(true)}
+              className="flex items-center gap-2 px-3 py-2 md:px-5 md:py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-md text-base md:text-lg font-semibold transition-colors whitespace-nowrap shrink-0"
+            >
+              <Archive size={20} />
+              <span className="hidden sm:inline">Obsolete Accounts</span>
             </button>
             <div className="hidden md:flex items-center space-x-4 lg:space-x-8">
               <span className="flex-shrink-0">
@@ -1355,6 +1406,16 @@ export default function LoanForm() {
               {isExisting && (
                 <button
                   type="button"
+                  onClick={handleObsolete}
+                  disabled={isObsoleting}
+                  className="bg-amber-600 text-white px-6 py-3 rounded-md text-xl font-semibold hover:bg-amber-700 disabled:opacity-60 transition-colors"
+                >
+                  {isObsoleting ? "Obsoleting..." : "Obsolete"}
+                </button>
+              )}
+              {isExisting && (
+                <button
+                  type="button"
                   onClick={handleDelete}
                   className="bg-red-500 text-white px-6 py-3 rounded-md text-xl font-semibold hover:bg-red-600 transition-colors"
                 >
@@ -1391,6 +1452,29 @@ export default function LoanForm() {
         }}
         isModalOpen={isModalOpen}
         setIsModalOpen={setIsModalOpen}
+      />
+
+      <ObsoleteLoansModal
+        isOpen={isObsoleteModalOpen}
+        onClose={() => setIsObsoleteModalOpen(false)}
+        onRestored={async (accountNo) => {
+          setIsObsoleteModalOpen(false);
+          await fetchNextAccountNo(true);
+          // Load the restored account into the form under its new number
+          const syntheticEvent = {
+            target: { value: accountNo },
+          } as React.FocusEvent<HTMLInputElement>;
+          setFormData((prev) => ({ ...prev, accountNo, loanNo: accountNo }));
+          await handleAccountNoBlur(syntheticEvent);
+          setAlertMessage(
+            `Account restored successfully with account no. ${accountNo}`
+          );
+          setAlertOpen(true);
+        }}
+        onError={(message) => {
+          setAlertMessage(message);
+          setAlertOpen(true);
+        }}
       />
 
       <CustomAlertDialog
