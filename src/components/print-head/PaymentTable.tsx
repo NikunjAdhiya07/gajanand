@@ -1,8 +1,7 @@
 "use client";
 import React, { useState, useEffect, useCallback } from "react";
-import * as XLSX from "xlsx";
 import { formatCurrency } from "@/lib/utils";
-import { computePaymentStatus } from "@/lib/paymentStatus";
+import { buildPaymentTableWorkbook } from "@/lib/paymentTableExport";
 import PaymentStatusDisplay from "./PaymentStatusDisplay";
 import PrintablePaymentTable from "./PrintablePaymentTable";
 import ReconciliationPanel from "./ReconciliationPanel";
@@ -462,28 +461,14 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
     setShareLink(null);
 
     try {
-      const { leftSide, rightSide } = getTableData();
-      const rows = [...leftSide, ...rightSide]
-        .filter((loan): loan is Loan => loan !== null)
-        .map((loan) => {
-          const { status } = computePaymentStatus(loan, selectedDate, loanType);
-          return {
-            Index: loan.index ?? "",
-            "Inst. Amt": loan.installmentAmount,
-            Name: loan.nameGujarati || loan.nameEnglish,
-            "Payment Status": status,
-            "Payment Today": loan.paymentReceivedToday || 0,
-          };
-        });
+      // Same source list the print preview gets, so the sheet matches it exactly.
+      const { buffer, fileName } = buildPaymentTableWorkbook({
+        loans: filteredLoans,
+        loanType,
+        selectedDate,
+        currentCategory,
+      });
 
-      const worksheet = XLSX.utils.json_to_sheet(rows);
-      const workbook = XLSX.utils.book_new();
-      const sheetName = `${loanType} ${currentCategory ?? ""}`.trim().slice(0, 31) || "Loans";
-      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
-      const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
-
-      const categoryPart = currentCategory ? `${currentCategory.replace(/\s+/g, "_")}-` : "";
-      const fileName = `${loanType}-loans-${categoryPart}${selectedDate}.xlsx`;
       const file = new File([buffer], fileName, {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
