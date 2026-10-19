@@ -105,6 +105,18 @@ const ShortcutKeys = () => {
           ]}
         />
         <Section
+          title="Day Book"
+          shortcuts={[
+            { key: "I", action: "Add Income" },
+            { key: "E", action: "Add Expense" },
+            { key: "Left / Right", action: "Previous / Next Day" },
+            { key: "T", action: "Go to Today" },
+            { key: "/", action: "Search Entries" },
+            { key: "Ctrl + Enter", action: "Save Entry" },
+            { key: "Escape", action: "Close Dialog / Move to Home" },
+          ]}
+        />
+        <Section
           title="Loan Ledger"
           shortcuts={[
             { key: "F1", action: "Account Finder" },

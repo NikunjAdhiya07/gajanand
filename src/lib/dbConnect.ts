@@ -33,13 +33,21 @@ if (!cached) {
 }
 
 async function dbConnect() {
-  // If we already have a connection, return it
-  if (cached.conn) {
+  // The driver reconnects by itself after a network blip, so a live connection
+  // is reused even when the 'disconnected' handler has cleared the cache.
+  if (mongoose.connection.readyState === 1) {
+    cached.conn = mongoose;
     return cached.conn;
   }
 
   // If we don't have a promise, create one
   if (!cached.promise) {
+    // connect() on a connection that is still connecting/reconnecting creates a
+    // second MongoClient while `connection.db` keeps pointing at the first one;
+    // sessions then fail with "ClientSession must be from the same MongoClient".
+    if (mongoose.connection.readyState !== 0) {
+      await mongoose.disconnect().catch(() => {});
+    }
     const opts = {
       bufferCommands: false,
       // Skip Mongoose's automatic index (re)build on every cold-start connection

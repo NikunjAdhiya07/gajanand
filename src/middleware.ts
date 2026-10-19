@@ -43,6 +43,7 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!api|login|_next/static|_next/image|favicon.ico|reset-credentials).*)',
+    // Public files are excluded: the image optimizer fetches them without the login cookie.
+    '/((?!api|login|_next/static|_next/image|favicon.ico|reset-credentials|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp|json)$).*)',
   ],
 };
